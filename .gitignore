@@ -1,25 +1,50 @@
-# Ignore system-specific files
+# ========================================
+# 1. System & IDE
+# ========================================
 .DS_Store
 Thumbs.db
-
-# Ignore local configuration files
-*.env
-
-# Ignore SQL Server-related files
-*.mdf
-*.ldf
-*.ndf
-
-# Ignore temporary or backup files
-*.log
-*.bak
-*.tmp
-
-# Ignore IDE-specific files
 .vscode/
 .idea/
 
-# Ignore exported data or diagrams (if applicable)
-*.csv
+# ========================================
+# 2. Config & Security (Cực kỳ quan trọng)
+# ========================================
+*.env
+
+# ========================================
+# 3. SQL Server & Databases
+# ========================================
+*.mdf
+*.ldf
+*.ndf
+*.bak
+
+# ========================================
+# 4. Data & Outputs (Tùy chỉnh cho Data Project)
+# ========================================
+# Chặn toàn bộ thư mục chứa data, thay vì chặn đuôi *.csv
+# (Hãy đổi tên 'datasets/' thành tên thư mục data thực tế của bạn)
+datasets/
+data/
+archive/
+
+# Chặn file ảnh/pdf export ra từ biểu đồ phân tích
 *.png
 *.pdf
+
+# ========================================
+# 5. Python & Logs
+# ========================================
+# Thư mục môi trường ảo của Python (rất nặng)
+venv/
+.venv/
+env/
+
+# Rác do Python tự sinh ra khi chạy script
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# File log hệ thống
+*.log
+*.tmp
