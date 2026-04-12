@@ -68,14 +68,39 @@ Quản lý vòng đời tồn tại thông tin của sản phẩm.
 *   Do Fact có ngày dạng `20101229`, ta cần bảng chuẩn `dim_date` (chứa các ngày tính từ 2000 -> 2050).
 *   **Các trường:** `date_key` (Int format `20101229`), `full_date`, `day`, `month`, `year`, `quarter`, `day_of_week`.
 
-### 3.4. Bảng `fact_sales` (Hạt nhân giao dịch - Transactional Fact)
-*   **Độ hạt (Granularity):** Mỗi dòng là một dòng trong một đơn hàng.
-*   **Foreign Keys:** `customer_sk`, `product_sk`, `order_date_key`, `ship_date_key`, `due_date_key`.
+### 3.4. Các Bảng Fact (Đa dạng hóa kho dữ liệu)
+
+Để xây dựng một DWH chuẩn chuyên nghiệp, chỉ có 1 bảng Fact Giao dịch là chưa đủ. Dựa trên dữ liệu, ta thiết kế 4 bảng Fact trải dài qua 3 loại hình phổ biến nhất (Transaction, Periodic Snapshot, Accumulating Snapshot):
+
+#### A. `fact_sales_transactions` (Cốt lõi - Transaction Fact)
+*   **Mục tiêu:** Ghi nhận từng dòng hàng xuất ra trong đơn hàng.
+*   **Độ hạt (Granularity):** Mỗi dòng là một Line Item trong đơn hàng (Từ file `sales_details.csv`).
+*   **Foreign Keys:** `customer_sk`, `product_sk`, `order_date_key`.
 *   **Business Keys:** `order_number` (`sls_ord_num`).
 *   **Measures (Chỉ số):** `quantity`, `price`, `sales_amount` (`sls_sales`).
-*   *Lưu ý khi Load Fact:* Phải Lookup Business Keys ở layer Silver vào các bảng Dimensions (Đã tạo ở trên) để móc nối ra `Surrogate Key` hợp lệ (`customer_sk`, `product_sk`).
 
----
+#### B. `fact_order_fulfillment` (Theo dõi quy trình - Accumulating Snapshot Fact)
+*   **Mục tiêu:** Theo dõi toàn bộ vòng đời của một Đơn hàng từ lúc Đặt, Quá trình Gói hàng, cho đến lúc Giao - Phục vụ mảng Vận hành (Operations / Supply Chain).
+*   **Độ hạt:** Mỗi dòng là một Đơn Hàng tổng (Order Number), thường được gom nhóm từ các Transaction.
+*   **Foreign Keys:** `customer_sk`, `order_date_key` (Ngày đặt), `ship_date_key` (Ngày giao), `due_date_key` (Ngày hạn chót).
+*   **Measures (Chỉ số thời gian & KPIs):**
+    *   `time_to_ship_days` (Thời gian từ lúc Order đến lúc Ship).
+    *   `shipping_delay_days` (Nếu Ship Date > Due Date).
+    *   `is_late_shipment_flag` (Cờ hiệu 0/1 đánh dấu đơn hàng bị trễ).
+    *   `total_order_lines` (Tổng số món hàng trong đơn).
+
+#### C. `fact_monthly_sales_snapshot` (Báo cáo định kỳ - Periodic Snapshot Fact)
+*   **Mục tiêu:** Phục vụ các báo cáo Dashboard chạy siêu nhanh cho cấp C-Level, tính tổng kết theo từng tháng mà không cần quét lại hàng triệu dòng Transaction.
+*   **Độ hạt:** Mỗi dòng là Tổng doanh thu của một Sản Phẩm (hoặc Khách hàng) trong một Tháng nhất định.
+*   **Foreign Keys:** `product_sk`, `customer_sk`, `year_month_key` (Khóa tháng/năm, VD: 201012).
+*   **Measures:** `monthly_total_revenue`, `monthly_total_quantity`, `order_count_in_month`.
+
+#### D. `fact_customer_lifetime_metrics` (Bảng đo lường vòng đời Khách hàng)
+*   **Mục tiêu:** Tính toán độ gắn kết và vòng đời của tệp Khách hàng, phục vụ bộ phận Marketing.
+*   **Độ hạt:** Mỗi dòng là số liệu cộng dồn của 1 Khách hàng (Hiếm khi thay đổi, hoặc chỉ update hàng đêm).
+*   **Foreign Keys:** `customer_sk`.
+*   **Measures:** `first_purchase_date_key`, `last_purchase_date_key`, `lifetime_value` (Tổng tiền khách đã chi), `total_orders_placed` (Số đơn đã đặt).
+
 
 ## 4. Kế Hoạch Triển Khai Thực Tế (Execution Plan)
 
