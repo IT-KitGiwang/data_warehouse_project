@@ -1,10 +1,16 @@
 /*
 ===============================================================================
-  DATA WAREHOUSE - CREATE TABLES & RELATIONSHIPS
+  DATA WAREHOUSE - CREATE TABLES & RELATIONSHIPS (v2)
   Project : SQL Data Warehouse - Kho dữ liệu cuối kỳ
   Model   : Snowflake Schema
   Tables  : 2 Fact Tables + 5 Dimension Tables
   Created : 2026-04-19
+  Updated : 2026-04-19 (v2 — post peer-review)
+
+  v2 Changes:
+    + FACT_SALES.unit_cost      — Snapshot giá vốn tại thời điểm bán
+    + FACT_SALES.days_to_ship   — Pre-calculated: ngày đặt → ngày giao
+    + FACT_SALES.days_to_due    — Pre-calculated: ngày đặt → ngày đến hạn
 ===============================================================================
 
   ARCHITECTURE:
@@ -176,9 +182,10 @@ GO
 -- ============================================================
 
 -- ────────────────────────────────────────────────────────────
--- FACT_SALES (Transaction Fact Table)
+-- FACT_SALES (Transaction Fact Table) — v2
 -- Source: CRM sales_details.csv
 -- Grain: 1 row = 1 line-item sale transaction
+-- v2: +unit_cost, +days_to_ship, +days_to_due
 -- ────────────────────────────────────────────────────────────
 CREATE TABLE gold.FACT_SALES (
     order_id            NVARCHAR(20)    NOT NULL,       -- Degenerate Dimension (sls_ord_num)
@@ -191,6 +198,9 @@ CREATE TABLE gold.FACT_SALES (
     quantity            INT             NOT NULL,       -- Measure (additive)
     sales_amount        DECIMAL(18,2)   NOT NULL,       -- Measure (additive)
     unit_price          DECIMAL(18,2)   NOT NULL,       -- Measure (non-additive)
+    unit_cost           DECIMAL(18,2)   NULL,           -- ★ v2: Snapshot giá vốn tại thời điểm bán
+    days_to_ship        INT             NULL,           -- ★ v2: DATEDIFF(order_date, ship_date)
+    days_to_due         INT             NULL,           -- ★ v2: DATEDIFF(order_date, due_date)
 
     CONSTRAINT FK_SALES_CUSTOMER FOREIGN KEY (customer_id)
         REFERENCES gold.DIM_CUSTOMER (customer_id),
@@ -376,10 +386,16 @@ SELECT
     dl.country,
     dl.region,
 
-    -- Measures
+    -- Measures (original)
     fs.quantity,
     fs.sales_amount,
-    fs.unit_price
+    fs.unit_price,
+
+    -- Measures (v2 — new)
+    fs.unit_cost,
+    fs.sales_amount - (fs.unit_cost * fs.quantity) AS gross_margin,
+    fs.days_to_ship,
+    fs.days_to_due
 
 FROM gold.FACT_SALES fs
 
@@ -452,8 +468,8 @@ GO
 
 /*
 -- ─────────────────────────────────────────────────────────────
--- QUERY 3: Sales with Current Product Cost (Profit Analysis)
--- Combines FACT_SALES + FACT_PRODUCT_PRICE for margin calc
+-- QUERY 3: Instant Profit Analysis (v2 — NO price table join!)
+-- Uses unit_cost snapshot directly from FACT_SALES
 -- ─────────────────────────────────────────────────────────────
 */
 SELECT
@@ -469,10 +485,10 @@ SELECT
     fs.quantity,
     fs.unit_price,
     fs.sales_amount,
-    fpp.cost                    AS product_cost,
+    fs.unit_cost,                                       -- ★ v2: directly from FACT
 
-    -- Calculated: Gross Margin
-    fs.sales_amount - (fpp.cost * fs.quantity) AS gross_margin
+    -- Instant Margin (no JOIN needed!)
+    fs.sales_amount - (fs.unit_cost * fs.quantity) AS gross_margin
 
 FROM gold.FACT_SALES fs
 
@@ -489,12 +505,47 @@ INNER JOIN gold.DIM_TIME dt_order
     ON fs.order_date_id = dt_order.date_id
 
 INNER JOIN gold.DIM_LOCATION dl
+    ON fs.location_id = dl.location_id;
+GO
+
+
+/*
+-- ─────────────────────────────────────────────────────────────
+-- QUERY 4: Logistics & Delivery Performance (v2 — NEW)
+-- Uses pre-calculated days_to_ship and days_to_due
+-- ─────────────────────────────────────────────────────────────
+*/
+SELECT
+    dcat.category,
+    dl.region,
+    dt.year,
+
+    COUNT(DISTINCT fs.order_id)         AS total_orders,
+    AVG(fs.days_to_ship)               AS avg_days_to_ship,
+    AVG(fs.days_to_due)                AS avg_days_to_due,
+
+    -- On-time delivery rate
+    CAST(
+        SUM(CASE WHEN fs.days_to_ship <= fs.days_to_due THEN 1 ELSE 0 END) * 100.0
+        / COUNT(*)
+    AS DECIMAL(5,2))                    AS on_time_pct
+
+FROM gold.FACT_SALES fs
+
+INNER JOIN gold.DIM_PRODUCT dp
+    ON fs.product_id = dp.product_id
+
+INNER JOIN gold.DIM_CATEGORY dcat
+    ON dp.category_id = dcat.category_id
+
+INNER JOIN gold.DIM_TIME dt
+    ON fs.order_date_id = dt.date_id
+
+INNER JOIN gold.DIM_LOCATION dl
     ON fs.location_id = dl.location_id
 
--- Join current price
-LEFT JOIN gold.FACT_PRODUCT_PRICE fpp
-    ON dp.product_id = fpp.product_id
-    AND fpp.is_current = 1;
+GROUP BY dcat.category, dl.region, dt.year
+ORDER BY dt.year, dcat.category, dl.region;
 GO
 
 
@@ -536,10 +587,11 @@ ORDER BY [From Table], [FK Name];
 GO
 
 PRINT '===============================================';
-PRINT '  DATA WAREHOUSE SETUP COMPLETE';
+PRINT '  DATA WAREHOUSE SETUP COMPLETE (v2)';
 PRINT '  Tables  : 7 (5 Dimensions + 2 Facts)';
 PRINT '  Schema  : gold';
 PRINT '  DIM_TIME: Pre-populated (2003-2025)';
 PRINT '  Indexes : Created for all FK columns';
+PRINT '  v2 adds : unit_cost, days_to_ship, days_to_due';
 PRINT '===============================================';
 GO

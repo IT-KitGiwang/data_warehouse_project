@@ -1,0 +1,687 @@
+================================================================================
+  DATA DICTIONARY — DATA WAREHOUSE (Schema: gold)
+  Tài liệu giải thích toàn bộ field trong từng bảng
+  Version : 2.0 (sau phản biện)
+  Ngày tạo: 19/04/2026
+  Cập nhật: 19/04/2026
+  SQL file: scripts/create_data_warehouse.sql (v2 — synced)
+================================================================================
+
+Quy ước ký hiệu:
+  PK      = Primary Key (khóa chính)
+  FK      = Foreign Key (khóa ngoại)
+  SK      = Surrogate Key (khóa thay thế, auto-generated)
+  BK      = Business Key (khóa nghiệp vụ từ hệ thống nguồn)
+  DD      = Degenerate Dimension (thuộc tính dimension lưu trực tiếp trong Fact)
+  N/A     = Không lấy từ nguồn (tự sinh hoặc tự tính)
+
+
+================================================================================
+  BẢNG 1: DIM_TIME (Dimension Thời gian)
+================================================================================
+
+  Mô tả     : Bảng chiều thời gian, chứa tất cả ngày từ 2003-01-01 đến
+               2025-12-31. Bảng tĩnh, pre-populate 1 lần duy nhất.
+  Số dòng   : 8,401
+  SCD Type  : Không áp dụng (bảng tĩnh, không bao giờ thay đổi)
+  Vai trò   : Role-Playing Dimension — được tham chiếu bởi 5 FK khác nhau
+               từ FACT_SALES (3 FK) và FACT_PRODUCT_PRICE (2 FK)
+
+  Nguồn     : Không lấy từ file CSV. Tự generate bằng SQL script.
+
+  ─────────────────────────────────────────────────────────────────────────────
+  Field          | Kiểu          | Nguồn / Cách tính
+  ─────────────────────────────────────────────────────────────────────────────
+
+  date_id          INT NOT NULL (PK)
+    Nguồn        : N/A — Tự sinh
+    Cách tính    : CONVERT(INT, FORMAT(full_date, 'yyyyMMdd'))
+    Ví dụ        : Ngày 2013-07-15 → date_id = 20130715
+    Business logic: Khóa chính dạng số nguyên YYYYMMDD. Dùng format này
+                    để vừa làm PK vừa có ý nghĩa đọc được (human-readable).
+                    Khi join từ FACT_SALES, các cột order_date_id, ship_date_id,
+                    due_date_id sẽ tham chiếu trực tiếp giá trị này.
+
+  full_date        DATE NOT NULL
+    Nguồn        : N/A — Tự sinh (sequence from 2003-01-01 to 2025-12-31)
+    Cách tính    : Giá trị ngày đầy đủ, tăng dần mỗi ngày 1
+    Ví dụ        : 2013-07-15
+    Business logic: Ngày đầy đủ dạng DATE, dùng cho các phép tính ngày
+                    (DATEDIFF, DATEADD) và hiển thị trực tiếp trên báo cáo.
+
+  day              INT NOT NULL
+    Nguồn        : N/A — Derive từ full_date
+    Cách tính    : DAY(full_date)
+    Ví dụ        : 15      (ngày 15 trong tháng)
+    Business logic: Ngày trong tháng (1-31). Dùng để lọc/group theo ngày
+                    cụ thể. VD: "Doanh thu ngày 1 hàng tháng so với ngày 15".
+
+  month            INT NOT NULL
+    Nguồn        : N/A — Derive từ full_date
+    Cách tính    : MONTH(full_date)
+    Ví dụ        : 7       (tháng 7)
+    Business logic: Tháng trong năm (1-12). Dùng để GROUP BY theo tháng
+                    và ORDER BY đúng thứ tự (1→12). Phục vụ so sánh
+                    month-over-month (MoM).
+
+  year             INT NOT NULL
+    Nguồn        : N/A — Derive từ full_date
+    Cách tính    : YEAR(full_date)
+    Ví dụ        : 2013
+    Business logic: Năm. Dùng để GROUP BY theo năm và so sánh
+                    year-over-year (YoY).
+
+  quarter          INT NOT NULL
+    Nguồn        : N/A — Derive từ full_date
+    Cách tính    : DATEPART(QUARTER, full_date)
+    Ví dụ        : 3       (Q3)
+    Business logic: Quý trong năm (1-4). Q1=Jan-Mar, Q2=Apr-Jun,
+                    Q3=Jul-Sep, Q4=Oct-Dec. Phục vụ báo cáo quý và
+                    so sánh quarter-over-quarter (QoQ).
+
+  day_of_week      INT NOT NULL
+    Nguồn        : N/A — Derive từ full_date
+    Cách tính    : DATEPART(WEEKDAY, full_date)
+    Ví dụ        : 2       (Monday, nếu DATEFIRST = 7)
+    Business logic: Số thứ tự ngày trong tuần (1-7). Dùng để phân tích
+                    xu hướng bán hàng theo ngày trong tuần và để sắp xếp
+                    (ORDER BY) đúng thứ tự Mon→Sun.
+    Lưu ý        : Giá trị phụ thuộc vào setting @@DATEFIRST của SQL Server.
+                    Mặc định DATEFIRST=7: 1=Sunday, 2=Monday, ..., 7=Saturday.
+
+  day_name         NVARCHAR(20) NOT NULL
+    Nguồn        : N/A — Derive từ full_date
+    Cách tính    : DATENAME(WEEKDAY, full_date)
+    Ví dụ        : 'Monday'
+    Business logic: Tên tiếng Anh của ngày trong tuần. Dùng để HIỂN THỊ
+                    trên báo cáo cho end-user đọc. Không dùng để sắp xếp
+                    (sắp theo ABC sẽ sai thứ tự) — dùng day_of_week để sort.
+
+  month_name       NVARCHAR(20) NOT NULL
+    Nguồn        : N/A — Derive từ full_date
+    Cách tính    : DATENAME(MONTH, full_date)
+    Ví dụ        : 'July'
+    Business logic: Tên tiếng Anh của tháng. Dùng để HIỂN THỊ trên báo cáo.
+                    Không dùng để sắp xếp (April < August < December theo ABC
+                    → sai) — dùng month (INT) để sort.
+
+  week_of_year     INT NOT NULL
+    Nguồn        : N/A — Derive từ full_date
+    Cách tính    : DATEPART(WEEK, full_date)
+    Ví dụ        : 29      (tuần thứ 29 trong năm)
+    Business logic: Tuần trong năm (1-53). Phục vụ phân tích theo tuần
+                    (weekly trend). VD: "Doanh thu tuần 29/2013".
+
+
+================================================================================
+  BẢNG 2: DIM_CATEGORY (Dimension Danh mục sản phẩm)
+================================================================================
+
+  Mô tả     : Bảng chiều phân loại sản phẩm, chứa nhóm lớn (category)
+               và nhóm con (subcategory).
+  Số dòng   : 37
+  SCD Type  : Type 1 (Overwrite — category hiếm khi thay đổi)
+  Nguồn gốc : ERP → PX_CAT_G1V2.csv
+
+  ─────────────────────────────────────────────────────────────────────────────
+  Field          | Kiểu          | Nguồn / Cách tính
+  ─────────────────────────────────────────────────────────────────────────────
+
+  category_id      INT NOT NULL IDENTITY(1,1) (PK, SK)
+    Nguồn        : N/A — Auto-generated bởi SQL Server (IDENTITY)
+    Cách tính    : Tự tăng từ 1
+    Business logic: Surrogate key, không mang ý nghĩa nghiệp vụ. Dùng làm
+                    FK reference từ DIM_PRODUCT.category_id.
+
+  category         NVARCHAR(100) NOT NULL
+    Nguồn        : PX_CAT_G1V2.csv → cột "CAT"
+    Cách tính    : Lấy trực tiếp, không transform
+    Ví dụ        : 'Accessories', 'Bikes', 'Clothing', 'Components'
+    Business logic: Nhóm sản phẩm chính (4 nhóm). Phục vụ phân tích doanh thu
+                    ở mức cao nhất của product hierarchy.
+                    - Accessories: phụ kiện (mũ bảo hiểm, khóa, đèn...)
+                    - Bikes: xe đạp (Mountain, Road, Touring)
+                    - Clothing: quần áo (áo jersey, quần short, găng tay...)
+                    - Components: linh kiện (khung, phanh, xích...)
+
+  subcategory      NVARCHAR(100) NOT NULL
+    Nguồn        : PX_CAT_G1V2.csv → cột "SUBCAT"
+    Cách tính    : Lấy trực tiếp, không transform
+    Ví dụ        : 'Mountain Bikes', 'Helmets', 'Jerseys', 'Brakes'
+    Business logic: Nhóm phụ trong category (37 nhóm). Phục vụ drill-down
+                    từ category → subcategory. VD: Bikes có 3 subcategory:
+                    Mountain Bikes, Road Bikes, Touring Bikes.
+
+  maintenance_flag NVARCHAR(3) NOT NULL
+    Nguồn        : PX_CAT_G1V2.csv → cột "MAINTENANCE"
+    Cách tính    : Lấy trực tiếp, không transform
+    Ví dụ        : 'Yes', 'No'
+    Business logic: Đánh dấu nhóm sản phẩm có cần bảo trì/bảo dưỡng hay
+                    không. VD: Bikes → Yes (xe đạp cần bảo trì), Clothing → No.
+                    Phục vụ phân tích: doanh thu nhóm sản phẩm cần bảo trì
+                    vs không cần bảo trì.
+
+
+================================================================================
+  BẢNG 3: DIM_PRODUCT (Dimension Sản phẩm)
+================================================================================
+
+  Mô tả     : Bảng chiều sản phẩm, chứa thông tin mô tả sản phẩm.
+               Mỗi product_key chỉ có 1 dòng (bản ghi mới nhất).
+  Số dòng   : ~295 (unique product_key từ 398 rows trong prd_info.csv)
+  SCD Type  : Type 1 (Overwrite — chỉ giữ phiên bản mới nhất)
+  Nguồn gốc : CRM → prd_info.csv (latest version per product_key)
+
+  ─────────────────────────────────────────────────────────────────────────────
+  Field          | Kiểu          | Nguồn / Cách tính
+  ─────────────────────────────────────────────────────────────────────────────
+
+  product_id       INT NOT NULL IDENTITY(1,1) (PK, SK)
+    Nguồn        : N/A — Auto-generated bởi SQL Server
+    Cách tính    : Tự tăng từ 1
+    Business logic: Surrogate key. KHÔNG dùng prd_id từ source vì source
+                    có nhiều prd_id cho cùng 1 sản phẩm (lịch sử giá).
+    Lưu ý        : prd_id trong prd_info.csv (210, 211, 212...) KHÔNG
+                    được dùng làm PK vì nó thay đổi theo mỗi phiên bản giá.
+
+  product_key      NVARCHAR(50) NOT NULL (BK)
+    Nguồn        : prd_info.csv → cột "prd_key"
+    Cách tính    : Lấy trực tiếp, không transform
+    Ví dụ        : 'BI-RB-BK-R93R-62', 'AC-HE-HL-U509-R'
+    Business logic: Business key — mã sản phẩm duy nhất trong hệ thống CRM.
+                    Cấu trúc: [CAT]-[SUBCAT]-[PRODUCT_CODE]
+                    VD: BI-RB-BK-R93R-62
+                        BI = Bikes (category prefix)
+                        RB = Road Bikes (subcategory prefix)
+                        BK-R93R-62 = mã sản phẩm cụ thể (phần này cũng
+                                     chính là sls_prd_key trong sales)
+    LƯU Ý MAPPING: Khi join với sales_details.csv, cần strip 2 segment đầu:
+                    product_key = "BI-RB-BK-R93R-62"
+                    sls_prd_key =       "BK-R93R-62"  (chỉ lấy phần sau)
+
+  product_name     NVARCHAR(200) NOT NULL
+    Nguồn        : prd_info.csv → cột "prd_nm"
+    Cách tính    : Lấy trực tiếp
+    Ví dụ        : 'Road-150 Red- 62', 'Sport-100 Helmet- Red'
+    Business logic: Tên đầy đủ sản phẩm, bao gồm dòng sản phẩm + màu +
+                    kích cỡ. Dùng để hiển thị trên báo cáo ở mức chi tiết
+                    nhất (leaf level) của product hierarchy.
+
+  product_line     NVARCHAR(50) NULL
+    Nguồn        : prd_info.csv → cột "prd_line"
+    Cách tính    : TRIM(prd_line).  Giá trị gốc có trailing space ("R ", "M ").
+    Ví dụ        : 'R', 'M', 'S', 'T'
+    Business logic: Dòng sản phẩm, cho biết sản phẩm thuộc phân khúc nào:
+                    - R = Road (đường nhựa)
+                    - M = Mountain (leo núi)
+                    - S = Special/Standard (đặc biệt/tiêu chuẩn)
+                    - T = Touring (du lịch)
+                    - NULL = Một số linh kiện (Components) không thuộc
+                      dòng cụ thể (Fork, Headset, Bottom Bracket, Brakes,
+                      Chains, Cranksets, Derailleurs)
+    Cho phép NULL : Có — vì Components là linh kiện đa năng, không gắn
+                    với Road/Mountain/Touring cụ thể
+
+  category_id      INT NOT NULL (FK → DIM_CATEGORY.category_id)
+    Nguồn        : Derive từ prd_info.csv → cột "prd_key" (2 segment đầu)
+    Cách tính    : 
+                   Bước 1: Lấy 2 segment đầu của prd_key
+                     prd_key = "BI-RB-BK-R93R-62" → "BI-RB"
+                   Bước 2: Thay "-" thành "_"
+                     "BI-RB" → "BI_RB"
+                   Bước 3: Join với PX_CAT_G1V2.csv → cột "ID"
+                     WHERE PX_CAT_G1V2.ID = 'BI_RB'
+                   Bước 4: Lấy category_id tương ứng từ DIM_CATEGORY
+
+                   SQL:
+                   REPLACE(
+                     LEFT(prd_key,
+                       CHARINDEX('-', prd_key,
+                         CHARINDEX('-', prd_key) + 1) - 1),
+                     '-', '_'
+                   )
+
+    Ví dụ        : prd_key "BI-RB-..." → "BI_RB" → category_id = 5
+    Business logic: Liên kết sản phẩm với danh mục. Phục vụ Snowflake join
+                    để drill-down từ Category → Subcategory → Product.
+
+
+================================================================================
+  BẢNG 4: DIM_CUSTOMER (Dimension Khách hàng)
+================================================================================
+
+  Mô tả     : Bảng chiều khách hàng, tích hợp dữ liệu từ CRM và ERP.
+  Số dòng   : ~18,484 (sau khi loại garbage + dedup)
+  SCD Type  : Type 1 (Overwrite — source không hỗ trợ change tracking)
+  Nguồn gốc : CRM → cust_info.csv + ERP → CUST_AZ12.csv
+
+  ─────────────────────────────────────────────────────────────────────────────
+  Field          | Kiểu          | Nguồn / Cách tính
+  ─────────────────────────────────────────────────────────────────────────────
+
+  customer_id      INT NOT NULL IDENTITY(1,1) (PK, SK)
+    Nguồn        : N/A — Auto-generated
+    Cách tính    : Tự tăng từ 1
+    Business logic: Surrogate key. Dùng cst_id gốc (11000, 11001...) làm
+                    staging join key, nhưng KHÔNG dùng làm PK trong DW vì:
+                    (1) cst_id có thể trùng giữa các hệ thống nguồn
+                    (2) Surrogate key đảm bảo SCD hoạt động đúng
+
+  customer_key     NVARCHAR(50) NOT NULL (BK)
+    Nguồn        : cust_info.csv → cột "cst_key"
+    Cách tính    : Lấy trực tiếp
+    Ví dụ        : 'AW00011000', 'AW00029483'
+    Business logic: Business key — mã khách hàng duy nhất trong CRM.
+                    Dùng để map sang ERP:
+                    - CUST_AZ12.CID: strip prefix "NAS" nếu có
+                      NASAW00011000 → AW00011000
+                      AW00025498 → AW00025498 (giữ nguyên)
+                    - LOC_A101.CID: remove dấu "-"
+                      AW-00011000 → AW00011000
+
+  first_name       NVARCHAR(100) NULL
+    Nguồn        : cust_info.csv → cột "cst_firstname"
+    Cách tính    : TRIM(cst_firstname) — loại bỏ khoảng trắng thừa
+    Ví dụ        : 'Jon', 'Eugene', 'Christy'
+    Business logic: Tên khách hàng. Dùng cho báo cáo chi tiết (customer
+                    detail report). Ghép với last_name để tạo full name.
+    Cho phép NULL : Có — một số bản ghi thiếu tên (row 18492: cst_id=29483)
+    Vấn đề DQ    : Nhiều giá trị gốc có whitespace thừa:
+                    " Jon" → "Jon", "  Lauren" → "Lauren", " Ian " → "Ian"
+
+  last_name        NVARCHAR(100) NULL
+    Nguồn        : cust_info.csv → cột "cst_lastname"
+    Cách tính    : TRIM(cst_lastname)
+    Ví dụ        : 'Yang', 'Torres', 'Zhu'
+    Business logic: Họ khách hàng.
+    Vấn đề DQ    : Tương tự first_name, có trailing space: "Yang ", "  Zhu"
+
+  gender           NVARCHAR(10) NULL
+    Nguồn        : cust_info.csv → "cst_gndr" (ưu tiên)
+                   CUST_AZ12.csv → "GEN" (fallback)
+    Cách tính    : Logic tích hợp 2 nguồn:
+                   CASE
+                     WHEN TRIM(cst_gndr) = 'M' THEN 'Male'
+                     WHEN TRIM(cst_gndr) = 'F' THEN 'Female'
+                     WHEN TRIM(GEN) IN ('M', 'Male') THEN 'Male'
+                     WHEN TRIM(GEN) IN ('F', 'Female') THEN 'Female'
+                     ELSE 'Unknown'
+                   END
+    Ví dụ        : 'Male', 'Female', 'Unknown'
+    Business logic: Giới tính khách hàng. CRM là nguồn ưu tiên; nếu CRM
+                    bị thiếu (từ row ~162+ trong cust_info), fallback sang
+                    ERP. Giá trị được chuẩn hóa thành Male/Female/Unknown.
+    Vấn đề DQ    : CRM dùng M/F, ERP dùng Male/Female/M/F lẫn lộn, có
+                    whitespace ("M ", "F ", "  "). Tất cả cần normalize.
+
+  marital_status   NVARCHAR(10) NULL
+    Nguồn        : cust_info.csv → cột "cst_marital_status"
+    Cách tính    : CASE TRIM(cst_marital_status)
+                     WHEN 'M' THEN 'Married'
+                     WHEN 'S' THEN 'Single'
+                     ELSE NULL
+                   END
+    Ví dụ        : 'Married', 'Single'
+    Business logic: Tình trạng hôn nhân. Phục vụ phân tích nhân khẩu học:
+                    "Khách hàng đã kết hôn mua nhiều hơn hay ít hơn
+                    khách hàng độc thân?"
+
+  birth_date       DATE NULL
+    Nguồn        : CUST_AZ12.csv → cột "BDATE"
+    Cách tính    : CASE WHEN BDATE > GETDATE() THEN NULL ELSE BDATE END
+    Ví dụ        : 1975-05-07
+    Business logic: Ngày sinh khách hàng. Dùng để derive nhóm tuổi (age
+                    group) khi phân tích. VD: Under 30, 30-49, 50+.
+    Cho phép NULL : Có — một số bản ghi thiếu, hoặc ngày sinh bất thường
+                    (năm 2050, 2042) bị set NULL bởi ETL.
+    Vấn đề DQ    : ~6 records có BDATE trong tương lai (2038-2050), rõ ràng
+                    là lỗi nhập liệu → set NULL.
+
+
+================================================================================
+  BẢNG 5: DIM_LOCATION (Dimension Địa lý)
+================================================================================
+
+  Mô tả     : Bảng chiều địa lý khách hàng.
+  Số dòng   : ~6 (unique countries)
+  SCD Type  : Type 1 (Overwrite — quốc gia hiếm khi thay đổi)
+  Nguồn gốc : ERP → LOC_A101.csv
+
+  ─────────────────────────────────────────────────────────────────────────────
+  Field          | Kiểu          | Nguồn / Cách tính
+  ─────────────────────────────────────────────────────────────────────────────
+
+  location_id      INT NOT NULL IDENTITY(1,1) (PK, SK)
+    Nguồn        : N/A — Auto-generated
+    Cách tính    : Tự tăng từ 1
+    Business logic: Surrogate key cho dimension địa lý.
+
+  country          NVARCHAR(100) NOT NULL
+    Nguồn        : LOC_A101.csv → cột "CNTRY"
+    Cách tính    : Chuẩn hóa tên nước:
+                   CASE CNTRY
+                     WHEN 'DE' THEN 'Germany'
+                     WHEN 'US' THEN 'United States'
+                     ELSE CNTRY  -- Australia, Canada, France, United Kingdom
+                   END
+    Ví dụ        : 'United States', 'Germany', 'Australia'
+    Business logic: Quốc gia của khách hàng. 
+    Vấn đề DQ    : Cùng 1 file LOC_A101.csv, Đức được encode 2 cách:
+                    "DE" (rows đầu) và "Germany" (rows cuối). Cần normalize.
+    Giá trị thực tế: Australia, United States, Canada, Germany, France,
+                     United Kingdom
+
+  region           NVARCHAR(50) NOT NULL
+    Nguồn        : N/A — Derive từ country
+    Cách tính    : CASE country
+                     WHEN 'United States' THEN 'North America'
+                     WHEN 'Canada'        THEN 'North America'
+                     WHEN 'Germany'       THEN 'Europe'
+                     WHEN 'France'        THEN 'Europe'
+                     WHEN 'United Kingdom' THEN 'Europe'
+                     WHEN 'Australia'     THEN 'Pacific'
+                     ELSE 'Other'
+                   END
+    Ví dụ        : 'North America', 'Europe', 'Pacific'
+    Business logic: Khu vực địa lý, derive từ country để tạo hierarchy
+                    2 cấp (Region → Country). Phục vụ roll-up: phân tích
+                    doanh thu theo vùng thay vì từng nước cụ thể.
+
+
+================================================================================
+  BẢNG 6: FACT_SALES (Bảng Fact Giao dịch bán hàng) — 13 fields
+================================================================================
+
+  Mô tả     : Bảng fact chính, chứa mọi giao dịch bán hàng.
+  Grain      : 1 dòng = 1 sản phẩm bán cho 1 khách hàng trong 1 đơn hàng
+  Số dòng   : 60,399
+  Số cột    : 13 (v1: 10, v2: +3)
+  Loại      : Transaction Fact Table (ghi nhận từng sự kiện giao dịch)
+  Nguồn gốc : CRM → sales_details.csv
+
+  ─────────────────────────────────────────────────────────────────────────────
+  Field          | Kiểu          | Nguồn / Cách tính
+  ─────────────────────────────────────────────────────────────────────────────
+
+  order_id         NVARCHAR(20) NOT NULL (DD)
+    Nguồn        : sales_details.csv → cột "sls_ord_num"
+    Cách tính    : Lấy trực tiếp
+    Ví dụ        : 'SO43697', 'SO75123'
+    Business logic: Mã đơn hàng. Đây là DEGENERATE DIMENSION — thuộc tính
+                    dimension nhưng lưu trực tiếp trong fact table (không
+                    tạo DIM_ORDER riêng). Dùng để:
+                    - Group các line items trong cùng 1 đơn hàng
+                    - Tra cứu đơn hàng cụ thể
+                    - Đếm số đơn hàng unique: COUNT(DISTINCT order_id)
+
+  customer_id      INT NOT NULL (FK → DIM_CUSTOMER.customer_id)
+    Nguồn        : sales_details.csv → cột "sls_cust_id"
+    Cách tính    : 
+                   Bước 1: Lấy sls_cust_id (VD: 21768)
+                   Bước 2: Join staging_cust_info WHERE cst_id = 21768
+                   Bước 3: Lấy surrogate key customer_id tương ứng
+    Business logic: Liên kết giao dịch với khách hàng. Cho phép phân tích:
+                    "Khách hàng nào mua nhiều nhất?", "Doanh thu theo 
+                    giới tính/hôn nhân?"
+
+  product_id       INT NOT NULL (FK → DIM_PRODUCT.product_id)
+    Nguồn        : sales_details.csv → cột "sls_prd_key"
+    Cách tính    :
+                   Bước 1: Lấy sls_prd_key (VD: "BK-R93R-62")
+                   Bước 2: Tìm prd_key trong DIM_PRODUCT có phần cuối 
+                           khớp: "BI-RB-BK-R93R-62" ends with "BK-R93R-62"
+                   Bước 3: Lấy surrogate key product_id tương ứng
+
+                   SQL transform trên staging:
+                   SUBSTRING(prd_key,
+                     CHARINDEX('-', prd_key, CHARINDEX('-', prd_key) + 1) + 1,
+                     LEN(prd_key)
+                   ) = sls_prd_key
+
+    Business logic: Liên kết giao dịch với sản phẩm. Cho phép phân tích:
+                    "Sản phẩm nào bán chạy nhất?", "Doanh thu theo danh mục?"
+    LƯU Ý        : Đây là mapping phức tạp nhất trong toàn bộ ETL.
+                    sls_prd_key chỉ chứa PHẦN SAU của prd_key (3+ segment cuối).
+
+  order_date_id    INT NOT NULL (FK → DIM_TIME.date_id)
+    Nguồn        : sales_details.csv → cột "sls_order_dt"
+    Cách tính    : Trực tiếp — sls_order_dt đã có format YYYYMMDD dạng INT,
+                   khớp với DIM_TIME.date_id
+                   VD: sls_order_dt = 20101229 → order_date_id = 20101229
+    Business logic: Ngày đặt hàng. Dimension chính cho phân tích thời gian.
+                    Role-Playing Dimension #1 tới DIM_TIME.
+
+  ship_date_id     INT NOT NULL (FK → DIM_TIME.date_id)
+    Nguồn        : sales_details.csv → cột "sls_ship_dt"
+    Cách tính    : Tương tự order_date_id
+                   VD: sls_ship_dt = 20110105 → ship_date_id = 20110105
+    Business logic: Ngày giao hàng thực tế. Role-Playing Dimension #2.
+                    Dùng để phân tích: "Tháng nào giao hàng nhiều nhất?",
+                    "Lead time trung bình theo danh mục sản phẩm?"
+
+  due_date_id      INT NOT NULL (FK → DIM_TIME.date_id)
+    Nguồn        : sales_details.csv → cột "sls_due_dt"
+    Cách tính    : Tương tự order_date_id
+                   VD: sls_due_dt = 20110110 → due_date_id = 20110110
+    Business logic: Ngày đến hạn giao. Role-Playing Dimension #3.
+                    Dùng để phân tích: "Bao nhiêu % đơn giao đúng hạn?",
+                    so sánh due_date vs ship_date.
+
+  location_id      INT NOT NULL (FK → DIM_LOCATION.location_id)
+    Nguồn        : Derive qua customer → LOC_A101.csv
+    Cách tính    :
+                   Bước 1: Từ sls_cust_id → tìm cst_key trong staging
+                   Bước 2: Map cst_key → LOC_A101.CID (REPLACE('-',''))
+                   Bước 3: Lấy CNTRY → normalize country
+                   Bước 4: Tìm location_id trong DIM_LOCATION WHERE 
+                           country khớp
+    Business logic: Liên kết giao dịch với vị trí địa lý khách hàng.
+                    Phục vụ phân tích: "Doanh thu theo quốc gia/khu vực?"
+
+  quantity         INT NOT NULL
+    Nguồn        : sales_details.csv → cột "sls_quantity"
+    Cách tính    : Lấy trực tiếp
+    Ví dụ        : 1, 2, 5
+    Business logic: Số lượng sản phẩm trong giao dịch.
+                    MEASURE loại ADDITIVE: có thể SUM() qua mọi dimension.
+                    VD: SUM(quantity) = tổng số lượng bán ra.
+
+  sales_amount     DECIMAL(18,2) NOT NULL
+    Nguồn        : sales_details.csv → cột "sls_sales"
+    Cách tính    : Lấy trực tiếp
+    Ví dụ        : 3578.00, 699.00
+    Business logic: Doanh thu (tiền thu được từ giao dịch).
+                    MEASURE loại ADDITIVE: SUM(sales_amount) = tổng doanh thu.
+                    Đây là metric QUAN TRỌNG NHẤT trong kho dữ liệu.
+                    Lý thuyết: sales_amount = unit_price * quantity
+                    (nhưng có thể khác do giảm giá/discount)
+
+  unit_price       DECIMAL(18,2) NOT NULL
+    Nguồn        : sales_details.csv → cột "sls_price"
+    Cách tính    : Lấy trực tiếp
+    Ví dụ        : 3578.00, 699.00
+    Business logic: Đơn giá bán (giá bán 1 sản phẩm cho khách hàng).
+                    MEASURE loại NON-ADDITIVE: KHÔNG SUM() được!
+                    Chỉ có ý nghĩa khi AVG() hoặc xem từng giao dịch.
+                    VD: AVG(unit_price) = đơn giá trung bình.
+
+  unit_cost        DECIMAL(18,2) NULL  ★ MỚI (v2)
+    Nguồn        : prd_info.csv → cột "prd_cost" (snapshot tại thời điểm bán)
+    Cách tính    : Lấy cost từ FACT_PRODUCT_PRICE tại thời điểm order_date:
+                   SELECT fpp.cost
+                   FROM FACT_PRODUCT_PRICE fpp
+                   WHERE fpp.product_id = <product_id>
+                     AND fpp.start_date_id <= <order_date_id>
+                     AND (fpp.end_date_id >= <order_date_id>
+                          OR fpp.end_date_id IS NULL)
+    Ví dụ        : 2171.00, 13.00
+    Business logic: Giá vốn sản phẩm tại thời điểm bán. Đây là snapshot
+                    (chụp cứng) để tính lợi nhuận gộp tức thì:
+                    gross_margin = sales_amount - (unit_cost * quantity)
+                    Không cần JOIN bảng giá khi query → cực nhanh.
+    Cho phép NULL : Có — 2 sản phẩm cũ (2003) không có cost trong source.
+
+  days_to_ship     INT NULL  ★ MỚI (v2)
+    Nguồn        : Derive từ sales_details.csv
+    Cách tính    : DATEDIFF(DAY,
+                     CAST(CAST(sls_order_dt AS VARCHAR) AS DATE),
+                     CAST(CAST(sls_ship_dt AS VARCHAR) AS DATE))
+    Ví dụ        : 7  (giao hàng sau 7 ngày đặt)
+    Business logic: Số ngày từ lúc đặt hàng đến lúc giao hàng.
+                    Pre-calculated measure phục vụ phân tích logistics:
+                    - AVG(days_to_ship) = thời gian giao hàng trung bình
+                    - "Category nào giao chậm nhất?"
+                    - "Quốc gia nào giao nhanh nhất?"
+
+  days_to_due      INT NULL  ★ MỚI (v2)
+    Nguồn        : Derive từ sales_details.csv
+    Cách tính    : DATEDIFF(DAY,
+                     CAST(CAST(sls_order_dt AS VARCHAR) AS DATE),
+                     CAST(CAST(sls_due_dt AS VARCHAR) AS DATE))
+    Ví dụ        : 12  (deadline giao hàng sau 12 ngày)
+    Business logic: Số ngày từ lúc đặt hàng đến deadline giao hàng.
+                    Kết hợp với days_to_ship để đánh giá đúng hạn:
+                    - Nếu days_to_ship <= days_to_due → Giao đúng hạn
+                    - Nếu days_to_ship > days_to_due → Giao trễ
+
+
+================================================================================
+  BẢNG 7: FACT_PRODUCT_PRICE (Bảng Fact Lịch sử giá sản phẩm)
+================================================================================
+
+  Mô tả     : Bảng fact phụ, lưu trữ lịch sử biến động giá vốn sản phẩm
+               theo thời gian. Hoạt động như SCD Type 2 tách rời.
+  Grain      : 1 dòng = giá vốn của 1 sản phẩm trong 1 khoảng thời gian
+  Số dòng   : ~398 (mỗi row trong prd_info.csv = 1 price period)
+  Loại      : Periodic Snapshot Fact Table
+  Nguồn gốc : CRM → prd_info.csv (các cột cost, start_dt, end_dt)
+
+  ─────────────────────────────────────────────────────────────────────────────
+  Field          | Kiểu          | Nguồn / Cách tính
+  ─────────────────────────────────────────────────────────────────────────────
+
+  product_price_id INT NOT NULL IDENTITY(1,1) (PK, SK)
+    Nguồn        : N/A — Auto-generated
+    Cách tính    : Tự tăng từ 1
+    Business logic: Surrogate key cho bảng lịch sử giá.
+
+  product_id       INT NOT NULL (FK → DIM_PRODUCT.product_id)
+    Nguồn        : prd_info.csv → cột "prd_key"
+    Cách tính    : Map prd_key → DIM_PRODUCT.product_key → lấy product_id
+    Business logic: Liên kết giá với sản phẩm. 1 product_id có thể có
+                    nhiều rows (nhiều kỳ giá).
+    Ví dụ        : product_key "AC-HE-HL-U509-R" có 3 rows:
+                   period 1: cost=12, 2011-07-01 → 2012-06-30
+                   period 2: cost=14, 2012-07-01 → 2013-06-30
+                   period 3: cost=13, 2013-07-01 → NULL (current)
+
+  start_date_id    INT NOT NULL (FK → DIM_TIME.date_id)
+    Nguồn        : prd_info.csv → cột "prd_start_dt"
+    Cách tính    : CONVERT(INT, FORMAT(prd_start_dt, 'yyyyMMdd'))
+    Ví dụ        : prd_start_dt = 2013-07-01 → start_date_id = 20130701
+    Business logic: Ngày bắt đầu hiệu lực giá. Thuộc tính SCD Type 2
+                    (effective_date).
+
+  end_date_id      INT NULL (FK → DIM_TIME.date_id)
+    Nguồn        : prd_info.csv → cột "prd_end_dt"
+    Cách tính    : Cần xử lý đặc biệt vì dữ liệu gốc bị đảo ngược.
+
+                   Cách tính đúng (dùng LEAD function):
+                   LEAD(start_date_id) OVER (
+                     PARTITION BY product_key
+                     ORDER BY prd_start_dt
+                   ) - 1
+
+                   Nếu LEAD = NULL → end_date_id = NULL (bản ghi hiện tại)
+                   
+    Ví dụ        : 20120630 (hiệu lực đến 30/06/2012)
+                   NULL (bản ghi đang hiệu lực — hiện tại)
+    Cho phép NULL : Có — NULL nghĩa là bản ghi ĐANG hiệu lực (current)
+    Business logic: Ngày kết thúc hiệu lực giá. Thuộc tính SCD Type 2
+                    (expiry_date).
+    LƯU Ý DQ    : Dữ liệu gốc có prd_end_dt BỊ ĐẢO NGƯỢC
+                    (start > end) cho nhiều records. ETL PHẢI tính lại
+                    bằng LEAD function.
+
+  cost             DECIMAL(18,2) NULL
+    Nguồn        : prd_info.csv → cột "prd_cost"
+    Cách tính    : Lấy trực tiếp
+    Ví dụ        : 12.00, 14.00, 2171.00
+    Business logic: Giá vốn sản phẩm trong period này. Đây là MEASURE
+                    chính của bảng. Cho phép phân tích:
+                    - "Giá vốn sản phẩm thay đổi bao nhiêu qua các năm?"
+                    - "Sản phẩm nào tăng giá vốn nhiều nhất?"
+    Cho phép NULL : Có — 2 sản phẩm cũ nhất (prd_id 210, 211, năm 2003)
+                    không có giá vốn trong source.
+
+  is_current       BIT NOT NULL DEFAULT 0
+    Nguồn        : N/A — Derive từ end_date_id
+    Cách tính    : CASE WHEN end_date_id IS NULL THEN 1 ELSE 0 END
+    Ví dụ        : 1 (bản ghi hiện tại), 0 (lịch sử)
+    Business logic: Cờ đánh dấu bản ghi giá HIỆN TẠI (đang hiệu lực).
+                    Phục vụ query nhanh giá hiện tại:
+                    SELECT * FROM FACT_PRODUCT_PRICE WHERE is_current = 1
+                    Thay vì phải tìm WHERE end_date_id IS NULL.
+                    Có filtered index trên cột này để tối ưu hiệu năng.
+
+
+================================================================================
+  TỔNG HỢP RELATIONSHIPS (10 Foreign Keys)
+================================================================================
+
+  FK#  | Từ bảng              | Cột FK           | Đến bảng        | Cột PK
+  ───────────────────────────────────────────────────────────────────────────
+   1   | FACT_SALES           | customer_id      | DIM_CUSTOMER    | customer_id
+   2   | FACT_SALES           | product_id       | DIM_PRODUCT     | product_id
+   3   | FACT_SALES           | order_date_id    | DIM_TIME        | date_id
+   4   | FACT_SALES           | ship_date_id     | DIM_TIME        | date_id
+   5   | FACT_SALES           | due_date_id      | DIM_TIME        | date_id
+   6   | FACT_SALES           | location_id      | DIM_LOCATION    | location_id
+   7   | FACT_PRODUCT_PRICE   | product_id       | DIM_PRODUCT     | product_id
+   8   | FACT_PRODUCT_PRICE   | start_date_id    | DIM_TIME        | date_id
+   9   | FACT_PRODUCT_PRICE   | end_date_id      | DIM_TIME        | date_id
+  10   | DIM_PRODUCT          | category_id      | DIM_CATEGORY    | category_id
+
+
+================================================================================
+  TỔNG HỢP SỐ LƯỢNG FIELD THEO BẢNG
+================================================================================
+
+  #  | Bảng                | Số field | PK | FK | SK | DD | Measures | Attributes
+  ───────────────────────────────────────────────────────────────────────────────
+  1  | DIM_TIME             | 10       | 1  | 0  | 0  | 0  | 0        | 9
+  2  | DIM_CATEGORY         | 4        | 1  | 0  | 1  | 0  | 0        | 3
+  3  | DIM_PRODUCT          | 5        | 1  | 1  | 1  | 0  | 0        | 3
+  4  | DIM_CUSTOMER         | 7        | 1  | 0  | 1  | 0  | 0        | 5
+  5  | DIM_LOCATION         | 3        | 1  | 0  | 1  | 0  | 0        | 2
+  6  | FACT_SALES           | 13       | 0  | 6  | 0  | 1  | 6        | 0
+  7  | FACT_PRODUCT_PRICE   | 6        | 1  | 3  | 1  | 0  | 1        | 1
+  ───────────────────────────────────────────────────────────────────────────────
+     | TỔNG                 | 48       | 6  | 10 | 5  | 1  | 7        | 23
+
+
+================================================================================
+  CHANGELOG
+================================================================================
+
+  [v1.0] 2026-04-19  Phiên bản đầu tiên
+    - 7 bảng: 5 Dimensions + 2 Facts
+    - FACT_SALES: 10 fields
+    - 10 Foreign Key relationships
+
+  [v2.0] 2026-04-19  Sau phản biện (peer review)
+    - FACT_SALES: +3 fields (unit_cost, days_to_ship, days_to_due)
+    - unit_cost: snapshot giá vốn vào Fact để tính margin tức thì
+    - days_to_ship: pre-calculated logistics metric
+    - days_to_due: pre-calculated deadline metric
+    - Lý do: Phản biện chỉ ra FACT_PRODUCT_PRICE gây khó cho BI Tools
+             khi tính Gross Margin (Non-equi date range join).
+             Giải pháp: giữ FACT_PRODUCT_PRICE cho phân tích lịch sử giá
+             + snapshot unit_cost vào FACT_SALES cho tính margin nhanh.
+    - Query 3 (Profit Analysis) viết lại: không cần JOIN bảng giá
+    - Query 4 (Logistics) thêm mới: avg_days_to_ship, on_time_pct
+
+
+================================================================================
+  END OF DATA DICTIONARY (v2)
+================================================================================
